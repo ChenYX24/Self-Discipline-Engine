@@ -325,10 +325,12 @@ export function AIPlannerPage() {
         let endpoint: string
         let headers: Record<string, string>
         let body: unknown
+        const base = config.customEndpoint?.replace(/\/+$/, '')
 
         if (config.provider === 'anthropic') {
-          endpoint =
-            config.customEndpoint || 'https://api.anthropic.com/v1/messages'
+          endpoint = base
+            ? `${base}/messages`
+            : 'https://api.anthropic.com/v1/messages'
           headers = {
             'Content-Type': 'application/json',
             'x-api-key': config.apiKey,
@@ -342,9 +344,9 @@ export function AIPlannerPage() {
             messages: apiMessages,
           }
         } else {
-          endpoint =
-            config.customEndpoint ||
-            'https://api.openai.com/v1/chat/completions'
+          endpoint = base
+            ? `${base}/chat/completions`
+            : 'https://api.openai.com/v1/chat/completions'
           headers = {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${config.apiKey}`,
@@ -365,8 +367,19 @@ export function AIPlannerPage() {
           body: JSON.stringify(body),
         })
 
+        const contentType = response.headers.get('content-type') ?? ''
+        if (contentType.includes('text/html')) {
+          throw new Error(
+            '端点返回了 HTML 而非 JSON，请在设置中配置代理端点',
+          )
+        }
+
         if (!response.ok) {
-          throw new Error(`API 请求失败: ${response.status}`)
+          const errData = await response.json().catch(() => ({}))
+          const errMsg =
+            (errData as { error?: { message?: string } }).error?.message ??
+            `HTTP ${response.status}`
+          throw new Error(errMsg)
         }
 
         const data = await response.json()
@@ -392,12 +405,20 @@ export function AIPlannerPage() {
         // Auto-advance after AI response
         setTimeout(() => advanceStep(), 1500)
       } catch (err) {
+        let errorMsg: string
+        if (err instanceof TypeError && err.message === 'Failed to fetch') {
+          errorMsg =
+            '无法连接到 API 端点。如果在国内网络，请在设置中配置代理端点地址。'
+        } else {
+          errorMsg = err instanceof Error ? err.message : '未知错误'
+        }
+
         setMessages((prev) => [
           ...prev,
           {
             id: nanoid(),
             role: 'assistant',
-            content: `API 调用出错：${err instanceof Error ? err.message : '未知错误'}。\n\n你可以在**设置**页面检查 API Key 配置，或继续使用模板模式。`,
+            content: `API 调用出错：${errorMsg}\n\n你可以在**设置**页面检查 API Key 和端点配置，或继续使用模板模式。`,
             timestamp: new Date().toISOString(),
           },
         ])
